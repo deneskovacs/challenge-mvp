@@ -11,6 +11,30 @@ from datetime import datetime
 import subprocess
 import wave
 import io
+import platform
+
+# Password protection
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+    
+    if st.session_state.password_correct:
+        return True
+    
+    st.title("🔐 Face Recognition - Login Required")
+    
+    with st.form("password_form"):
+        password = st.text_input("Enter password", type="password")
+        if st.form_submit_button("Login"):
+            if password == st.secrets.get("app_password", ""):
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("❌ Incorrect password")
+    return False
+
+if not check_password():
+    st.stop()
 
 # Configure logging
 logging.basicConfig(
@@ -87,11 +111,17 @@ def speak_text(text):
     try:
         logger.info(f"Generating audio for: '{text}'")
         
+        # Check if running on macOS
+        if platform.system() != "Darwin":
+            logger.warning("Audio not available on this platform (not macOS)")
+            return None
+        
         # Use macOS say command to generate AIFF
         result = subprocess.run(
             ['say', '-o', '/tmp/speech.aiff', text],
             capture_output=True,
-            text=True
+            text=True,
+            timeout=10
         )
         
         if result.returncode == 0:
@@ -99,7 +129,8 @@ def speak_text(text):
             convert_result = subprocess.run(
                 ['ffmpeg', '-i', '/tmp/speech.aiff', '-acodec', 'pcm_s16le', '-ar', '44100', '/tmp/speech.wav', '-y'],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=10
             )
             
             if convert_result.returncode == 0:
@@ -108,7 +139,6 @@ def speak_text(text):
                 logger.info(f"Audio converted to WAV successfully ({len(audio_bytes)} bytes)")
                 return audio_bytes
             else:
-                # Fallback: return AIFF if conversion fails
                 logger.warning("WAV conversion failed, using AIFF")
                 with open('/tmp/speech.aiff', 'rb') as f:
                     audio_bytes = f.read()
@@ -119,7 +149,6 @@ def speak_text(text):
             return None
     except Exception as e:
         logger.error(f"Audio generation failed: {e}")
-        st.error(f"Audio error: {e}")
         return None
 
 with st.expander("📋 How to get best results"):
@@ -193,6 +222,8 @@ if st.session_state.get("show_audio", False) and "matched_person" in st.session_
             if audio_bytes:
                 logger.info("Playing audio: Say Name")
                 st.audio(audio_bytes, format="audio/wav")
+            else:
+                st.warning("⚠️ Audio not available on this platform (works on macOS only)")
     
     with audio_col2:
         if st.button("👨‍👩‍👧 Say Relation", use_container_width=True, key="say_relation_btn"):
@@ -203,6 +234,8 @@ if st.session_state.get("show_audio", False) and "matched_person" in st.session_
             if audio_bytes:
                 logger.info("Playing audio: Say Relation")
                 st.audio(audio_bytes, format="audio/wav")
+            else:
+                st.warning("⚠️ Audio not available on this platform (works on macOS only)")
     
     with audio_col3:
         if st.button("👋 Say Welcome", use_container_width=True, key="say_welcome_btn"):
@@ -213,6 +246,8 @@ if st.session_state.get("show_audio", False) and "matched_person" in st.session_
             if audio_bytes:
                 logger.info("Playing audio: Say Welcome")
                 st.audio(audio_bytes, format="audio/wav")
+            else:
+                st.warning("⚠️ Audio not available on this platform (works on macOS only)")
 else:
     if not st.session_state.get("show_audio", False):
         st.info("ℹ️ Recognize a face first to see audio options")
