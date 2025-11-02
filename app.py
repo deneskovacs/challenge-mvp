@@ -2,16 +2,29 @@ import streamlit as st
 from PIL import Image
 import cv2
 import numpy as np
-import insightface
-from sklearn.metrics.pairwise import cosine_similarity
 import json
 import os
 import logging
 from datetime import datetime
-import subprocess
-import wave
-import io
 import platform
+import subprocess
+
+# Environment detection
+IS_CLOUD = os.getenv("STREAMLIT_RUNTIME_EPHEMERAL_DISK_PATH") is not None or "streamlitcloud" in os.getcwd()
+IS_MACOS = platform.system() == "Darwin"
+
+# Conditional imports
+try:
+    import insightface
+    INSIGHTFACE_AVAILABLE = True
+except ImportError:
+    INSIGHTFACE_AVAILABLE = False
+
+try:
+    from sklearn.metrics.pairwise import cosine_similarity
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
 
 # Password protection
 def check_password():
@@ -46,13 +59,18 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Face Recognition", layout="wide")
 st.title("🔍 Face Recognition")
+
+if not INSIGHTFACE_AVAILABLE or not SKLEARN_AVAILABLE:
+    st.error("❌ Required dependencies not available. Please check deployment logs.")
+    st.stop()
+
 st.write("Capture your face to see if you're recognized")
 
 @st.cache_resource
 def load_face_model():
     """Load InsightFace model"""
     ctx_id = -1
-    logger.info("Loading InsightFace model...")
+    logger.info(f"Loading InsightFace model (Cloud: {IS_CLOUD}, macOS: {IS_MACOS})...")
     return insightface.app.FaceAnalysis(ctx_id=ctx_id, providers=['CPUExecutionProvider'])
 
 analyzer = load_face_model()
@@ -107,16 +125,22 @@ def find_match(captured_embedding, threshold=70):
     return None, best_score
 
 def speak_text(text):
-    """Text-to-speech using system command (offline, no internet needed)"""
+    """Text-to-speech with environment detection"""
     try:
-        logger.info(f"Generating audio for: '{text}'")
+        logger.info(f"Audio generation attempted (Cloud: {IS_CLOUD}, macOS: {IS_MACOS})")
         
-        # Check if running on macOS
-        if platform.system() != "Darwin":
-            logger.warning("Audio not available on this platform (not macOS)")
+        # Only attempt audio on macOS locally
+        if not IS_MACOS:
+            logger.warning("Audio not available (not macOS)")
             return None
         
-        # Use macOS say command to generate AIFF
+        if IS_CLOUD:
+            logger.warning("Audio not available on Streamlit Cloud")
+            return None
+        
+        logger.info(f"Generating audio for: '{text}'")
+        
+        # Use macOS say command
         result = subprocess.run(
             ['say', '-o', '/tmp/speech.aiff', text],
             capture_output=True,
@@ -125,30 +149,29 @@ def speak_text(text):
         )
         
         if result.returncode == 0:
-            # Convert AIFF to WAV for better Streamlit compatibility
-            convert_result = subprocess.run(
-                ['ffmpeg', '-i', '/tmp/speech.aiff', '-acodec', 'pcm_s16le', '-ar', '44100', '/tmp/speech.wav', '-y'],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            # Try to convert to WAV
+            try:
+                convert_result = subprocess.run(
+                    ['ffmpeg', '-i', '/tmp/speech.aiff', '-acodec', 'pcm_s16le', '-ar', '44100', '/tmp/speech.wav', '-y'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                
+                if convert_result.returncode == 0:
+                    with open('/tmp/speech.wav', 'rb') as f:
+                        return f.read()
+            except:
+                pass
             
-            if convert_result.returncode == 0:
-                with open('/tmp/speech.wav', 'rb') as f:
-                    audio_bytes = f.read()
-                logger.info(f"Audio converted to WAV successfully ({len(audio_bytes)} bytes)")
-                return audio_bytes
-            else:
-                logger.warning("WAV conversion failed, using AIFF")
-                with open('/tmp/speech.aiff', 'rb') as f:
-                    audio_bytes = f.read()
-                logger.info(f"Audio generated successfully (AIFF, {len(audio_bytes)} bytes)")
-                return audio_bytes
-        else:
-            logger.error(f"Audio generation failed: {result.stderr}")
-            return None
+            # Fallback to AIFF
+            with open('/tmp/speech.aiff', 'rb') as f:
+                logger.info(f"Audio generated (AIFF)")
+                return f.read()
+        
+        return None
     except Exception as e:
-        logger.error(f"Audio generation failed: {e}")
+        logger.error(f"Audio generation error: {e}")
         return None
 
 with st.expander("📋 How to get best results"):
@@ -220,10 +243,11 @@ if st.session_state.get("show_audio", False) and "matched_person" in st.session_
             st.info(f"Speaking: \"{announcement}\"")
             audio_bytes = speak_text(announcement)
             if audio_bytes:
-                logger.info("Playing audio: Say Name")
                 st.audio(audio_bytes, format="audio/wav")
+            elif IS_CLOUD:
+                st.info("ℹ️ Audio not available on cloud (works locally on macOS)")
             else:
-                st.warning("⚠️ Audio not available on this platform (works on macOS only)")
+                st.info("ℹ️ Audio not available on this system")
     
     with audio_col2:
         if st.button("👨‍👩‍👧 Say Relation", use_container_width=True, key="say_relation_btn"):
@@ -232,10 +256,11 @@ if st.session_state.get("show_audio", False) and "matched_person" in st.session_
             st.info(f"Speaking: \"{relation_text}\"")
             audio_bytes = speak_text(relation_text)
             if audio_bytes:
-                logger.info("Playing audio: Say Relation")
                 st.audio(audio_bytes, format="audio/wav")
+            elif IS_CLOUD:
+                st.info("ℹ️ Audio not available on cloud (works locally on macOS)")
             else:
-                st.warning("⚠️ Audio not available on this platform (works on macOS only)")
+                st.info("ℹ️ Audio not available on this system")
     
     with audio_col3:
         if st.button("👋 Say Welcome", use_container_width=True, key="say_welcome_btn"):
@@ -244,10 +269,11 @@ if st.session_state.get("show_audio", False) and "matched_person" in st.session_
             st.info(f"Speaking: \"{welcome_text}\"")
             audio_bytes = speak_text(welcome_text)
             if audio_bytes:
-                logger.info("Playing audio: Say Welcome")
                 st.audio(audio_bytes, format="audio/wav")
+            elif IS_CLOUD:
+                st.info("ℹ️ Audio not available on cloud (works locally on macOS)")
             else:
-                st.warning("⚠️ Audio not available on this platform (works on macOS only)")
+                st.info("ℹ️ Audio not available on this system")
 else:
     if not st.session_state.get("show_audio", False):
         st.info("ℹ️ Recognize a face first to see audio options")

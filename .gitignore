@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv312/
+env/
+ENV/
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/cache/
+
+# Logs
+*.log
+/tmp/
+
+# Database (don't push local database)
+/tmp/face_database.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+.env
