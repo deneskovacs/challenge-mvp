@@ -26,8 +26,12 @@ try:
 except ImportError:
     SKLEARN_AVAILABLE = False
 
-# Password protection
+# Password protection - only on cloud
 def check_password():
+    if not IS_CLOUD:
+        # Skip password on local execution
+        return True
+    
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
     
@@ -49,6 +53,52 @@ def check_password():
 if not check_password():
     st.stop()
 
+# Add custom CSS for neon gradient
+st.markdown("""
+<style>
+    .main {
+        background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+    }
+    .stButton > button {
+        background: linear-gradient(135deg, #00D9FF 0%, #0099CC 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: bold;
+        transition: all 0.3s ease;
+    }
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #00F0FF 0%, #00BBDD 100%);
+        box-shadow: 0 0 20px #00D9FF;
+    }
+    .stSuccess {
+        background: linear-gradient(135deg, #00D9FF 0%, #00FF88 100%);
+        border-radius: 8px;
+    }
+    .stError {
+        background: linear-gradient(135deg, #FF006E 0%, #FF4365 100%);
+        border-radius: 8px;
+    }
+    .stWarning {
+        background: linear-gradient(135deg, #FFB703 0%, #FB5607 100%);
+        border-radius: 8px;
+    }
+    h1, h2, h3 {
+        background: linear-gradient(135deg, #00D9FF 0%, #00FF88 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: bold;
+    }
+    .stMetric {
+        background: linear-gradient(135deg, #1a1f3a 0%, #2d2f52 100%);
+        border: 2px solid #00D9FF;
+        border-radius: 8px;
+        padding: 15px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Configure logging
 logging.basicConfig(
     filename='/tmp/face_recognition.log',
@@ -59,12 +109,11 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Face Recognition", layout="wide")
 st.title("🔍 Face Recognition")
+st.write("✨ Capture your face to see if you're recognized")
 
 if not INSIGHTFACE_AVAILABLE or not SKLEARN_AVAILABLE:
     st.error("❌ Required dependencies not available. Please check deployment logs.")
     st.stop()
-
-st.write("Capture your face to see if you're recognized")
 
 @st.cache_resource
 def load_face_model():
