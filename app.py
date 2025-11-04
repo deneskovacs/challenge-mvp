@@ -1,5 +1,8 @@
 import streamlit as st
-from PIL import Image
+
+# MUST be first Streamlit command - before any other imports
+st.set_page_config(page_title="Face Recognition", layout="wide")
+
 import cv2
 import numpy as np
 import json
@@ -8,17 +11,11 @@ import logging
 from datetime import datetime
 import platform
 import subprocess
+from PIL import Image
 
 # Environment detection
 IS_CLOUD = os.getenv("STREAMLIT_RUNTIME_EPHEMERAL_DISK_PATH") is not None or "streamlitcloud" in os.getcwd()
 IS_MACOS = platform.system() == "Darwin"
-
-# Conditional imports
-try:
-    import insightface
-    INSIGHTFACE_AVAILABLE = True
-except ImportError:
-    INSIGHTFACE_AVAILABLE = False
 
 try:
     from sklearn.metrics.pairwise import cosine_similarity
@@ -107,24 +104,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-st.set_page_config(page_title="Face Recognition", layout="wide")
 st.title("🔍 Face Recognition")
 st.write("✨ Capture your face to see if you're recognized")
 
-if not INSIGHTFACE_AVAILABLE or not SKLEARN_AVAILABLE:
+if not SKLEARN_AVAILABLE:
     st.error("❌ Required dependencies not available. Please check deployment logs.")
     st.stop()
 
 @st.cache_resource
 def load_face_model():
-    """Load InsightFace model"""
+    """Load InsightFace model - lazy loaded to avoid circular imports"""
+    try:
+        import insightface
+    except ImportError:
+        st.error("❌ insightface not installed. Please install: pip install insightface")
+        st.stop()
+    
     ctx_id = -1
     logger.info(f"Loading InsightFace model (Cloud: {IS_CLOUD}, macOS: {IS_MACOS})...")
-    return insightface.app.FaceAnalysis(ctx_id=ctx_id, providers=['CPUExecutionProvider'])
+    analyzer = insightface.app.FaceAnalysis(ctx_id=ctx_id, providers=['CPUExecutionProvider'])
+    analyzer.prepare(ctx_id=-1, det_thresh=0.5, det_size=(640, 640))
+    logger.info("InsightFace model prepared")
+    return analyzer
 
 analyzer = load_face_model()
-analyzer.prepare(ctx_id=-1, det_thresh=0.5, det_size=(640, 640))
-logger.info("InsightFace model prepared")
 
 def extract_face_embedding(image_array):
     """Extract face embedding using InsightFace"""
@@ -148,7 +151,20 @@ def load_database():
     return {"faces": []}
 
 def compare_embeddings(embedding1, embedding2):
-    """Compare two embeddings"""
+    """Compare two embeddings - lazy load sklearn"""
+    try:
+        from sklearn.metrics.pairwise import cosine_similarity
+    except ImportError:
+        st.error("❌ sklearn not installed. Please install: pip install scikit-learn")
+        return 0
+    
+    embedding1 = np.array(embedding1).flatten()
+    embedding2 = np.array(embedding2).flatten()
+    
+    if embedding1.shape != embedding2.shape:
+        embedding1 = embedding1.reshape(1, -1)
+        embedding2 = embedding2.reshape(1, -1)
+    
     similarity = cosine_similarity([embedding1], [embedding2])[0][0]
     return max(0, (similarity + 1) / 2 * 100)
 

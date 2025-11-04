@@ -1,4 +1,8 @@
 import streamlit as st
+
+# MUST be first Streamlit command - before any other imports
+st.set_page_config(page_title="Register Face", layout="wide")
+
 from PIL import Image
 import cv2
 import numpy as np
@@ -6,6 +10,10 @@ import json
 import os
 from datetime import datetime
 import logging
+import platform
+
+# Environment detection
+IS_CLOUD = os.getenv("STREAMLIT_RUNTIME_EPHEMERAL_DISK_PATH") is not None or "streamlitcloud" in os.getcwd()
 
 logging.basicConfig(
     filename='/tmp/face_recognition.log',
@@ -14,26 +22,78 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-st.set_page_config(page_title="Register Face", layout="wide")
+# Password protection - only on cloud
+if IS_CLOUD:
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+    
+    if not st.session_state.password_correct:
+        st.title("🔐 Login Required")
+        with st.form("password_form"):
+            password = st.text_input("Enter password", type="password")
+            if st.form_submit_button("Login"):
+                if password == st.secrets.get("app_password", ""):
+                    st.session_state.password_correct = True
+                    st.rerun()
+                else:
+                    st.error("❌ Incorrect password")
+        st.stop()
+
+# Add custom CSS
+st.markdown("""
+<style>
+    .main {
+        background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+    }
+    .stButton > button {
+        background: linear-gradient(135deg, #00D9FF 0%, #0099CC 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: bold;
+    }
+    .stButton > button:hover {
+        box-shadow: 0 0 20px #00D9FF;
+    }
+    h1, h2 {
+        background: linear-gradient(135deg, #00D9FF 0%, #00FF88 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("📝 Register Face")
+st.write("✨ Register a new person with their face")
 
 @st.cache_resource
-def load_detector():
-    return cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+def load_face_model():
+    """Load InsightFace model - lazy loaded to avoid circular imports"""
+    try:
+        import insightface
+    except ImportError:
+        st.error("❌ insightface not installed. Please install: pip install insightface")
+        st.stop()
+    
+    logger.info("Loading InsightFace model for registration...")
+    analyzer = insightface.app.FaceAnalysis(ctx_id=-1, providers=['CPUExecutionProvider'])
+    analyzer.prepare(ctx_id=-1, det_thresh=0.5, det_size=(640, 640))
+    return analyzer
 
-detector = load_detector()
+analyzer = load_face_model()
 
-def extract_face_histogram(image_array):
-    gray = cv2.cvtColor(image_array, cv2.COLOR_RGB2GRAY)
-    faces = detector.detectMultiScale(gray, 1.1, 5, minSize=(50, 50))
+def extract_face_embedding(image_array):
+    """Extract face embedding using InsightFace"""
+    faces = analyzer.get(image_array)
     
     if len(faces) == 0:
+        logger.warning("No face detected in image")
         return None
     
-    x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-    face_roi = gray[y:y+h, x:x+w]
-    hist = cv2.calcHist([face_roi], [0], None, [256], [0, 256])
-    return cv2.normalize(hist, hist).flatten().tolist()
+    largest_face = max(faces, key=lambda f: f.bbox[2] * f.bbox[3])
+    logger.info("Face detected and extracted")
+    return largest_face.embedding
 
 def load_database():
     db_path = "/tmp/face_database.json"
@@ -67,9 +127,11 @@ if st.button("✅ Register Face"):
         with st.spinner("Processing..."):
             try:
                 image_array = np.array(Image.open(uploaded_file))
-                hist = extract_face_histogram(image_array)
+                # Convert RGB to BGR for OpenCV/InsightFace
+                image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+                embedding = extract_face_embedding(image_array)
                 
-                if hist is None:
+                if embedding is None:
                     st.error("❌ No face detected")
                 else:
                     db = load_database()
@@ -78,7 +140,7 @@ if st.button("✅ Register Face"):
                         "name": name,
                         "relation": relation,
                         "notes": notes,
-                        "histogram": hist,
+                        "embedding": embedding.tolist(),  # Store as list for JSON
                         "registered_at": datetime.now().isoformat()
                     }
                     db["faces"].append(person)
@@ -88,6 +150,7 @@ if st.button("✅ Register Face"):
                     st.balloons()
             except Exception as e:
                 st.error(f"Error: {str(e)}")
+                logger.error(f"Registration error: {e}")
 
 st.divider()
 st.subheader("Registered Persons")
